@@ -901,6 +901,17 @@ with tab_query:
                             </div>
                         </div>
                         """, unsafe_allow_html=True)
+                    elif err_cat == "SERVICE_UNAVAILABLE":
+                        st.markdown(f"""
+                        <div class="callout-box warning">
+                            <span>⏳</span>
+                            <div>
+                                <strong>Model High Demand (HTTP 503):</strong><br>
+                                {err_msg}<br>
+                                <span style="font-size:0.8rem;">Spikes in demand are temporary. Click <b>Generate SQL</b> to retry, or switch to <code>gemini-2.5-flash</code> / <code>gemini-2.0-flash</code> in the sidebar.</span>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
                     elif err_cat == "QUOTA_EXHAUSTED":
                         st.markdown(f"""
                         <div class="callout-box warning">

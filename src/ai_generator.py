@@ -116,6 +116,22 @@ def classify_gemini_error(exc: Exception, model: str, api_key: Optional[str] = N
     msg = sanitize_error_message(raw_msg, api_key)
     lower = msg.lower()
 
+    # 503 / High demand / Model temporarily unavailable
+    if (
+        code == 503
+        or "503" in msg
+        or "unavailable" in status
+        or "unavailable" in lower
+        or "high demand" in lower
+        or "temporarily unavailable" in lower
+    ):
+        return AIProviderError(
+            f"Model '{model}' is temporarily experiencing high demand on Google's servers (HTTP 503). "
+            f"Please click 'Generate & Execute' to retry, or switch to 'gemini-2.5-flash' or 'gemini-2.0-flash' in the sidebar for instant response.",
+            category="SERVICE_UNAVAILABLE",
+            model=model,
+        )
+
     # 404 / Model not found or unsupported for generateContent
     if code == 404 or "404" in msg or "not_found" in status or "not found" in lower or "not supported for generatecontent" in lower:
         return AIProviderError(
@@ -339,14 +355,25 @@ def _call_gemini(
         from google.genai import types
 
         client = genai.Client(api_key=clean_key)
-        response = client.models.generate_content(
-            model=clean_model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                temperature=0.0,
-            ),
-        )
+        response = None
+        for attempt in range(2):
+            try:
+                response = client.models.generate_content(
+                    model=clean_model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=0.0,
+                    ),
+                )
+                break
+            except Exception as attempt_err:
+                err_str = str(attempt_err).lower()
+                if attempt == 0 and ("503" in err_str or "unavailable" in err_str or "high demand" in err_str):
+                    import time
+                    time.sleep(1.5)
+                    continue
+                raise attempt_err
 
         raw_text = getattr(response, "text", "") or ""
         # Robust candidate extraction fallback for thinking/multimodal variants
