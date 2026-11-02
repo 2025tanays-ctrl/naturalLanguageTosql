@@ -1,10 +1,24 @@
+import os
 import sqlite3
 import json
 from pathlib import Path
+from typing import Optional
 
 
 def get_db_path() -> Path:
-    """Return the path to the main QueryCraft SQLite database."""
+    """
+    Return the path to the main QueryCraft SQLite database.
+    Checks QUERYCRAFT_DB_PATH in env/secrets before falling back to default.
+    """
+    env_path = os.environ.get("QUERYCRAFT_DB_PATH")
+    if env_path:
+        return Path(env_path)
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets") and "QUERYCRAFT_DB_PATH" in st.secrets:
+            return Path(str(st.secrets["QUERYCRAFT_DB_PATH"]))
+    except Exception:
+        pass
     return Path(__file__).parent.parent / "data" / "querycraft.db"
 
 

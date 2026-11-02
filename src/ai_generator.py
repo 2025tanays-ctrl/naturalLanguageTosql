@@ -110,24 +110,45 @@ def get_client():
 def classify_gemini_error(exc: Exception, model: str, api_key: Optional[str] = None) -> AIProviderError:
     """Classify exceptions into well-defined diagnostic error categories."""
     raw_msg = str(exc)
+    code = getattr(exc, "code", None)
+    status = str(getattr(exc, "status", "")).upper()
     msg = sanitize_error_message(raw_msg, api_key)
     lower = msg.lower()
 
     # 404 / Model not found or unsupported for generateContent
-    if "404" in msg or "not found" in lower or "not supported for generatecontent" in lower:
+    if code == 404 or "404" in msg or "not_found" in status or "not found" in lower or "not supported for generatecontent" in lower:
         return AIProviderError(
             f"Model '{model}' is not found or not supported for generateContent (HTTP 404). "
-            f"Please refresh available models in the sidebar or switch to a supported model like '{DEFAULT_GEMINI_MODEL}'.",
+            f"Please refresh available models in the sidebar using '🔄' or select a supported model such as 'gemini-2.5-flash' or 'gemini-2.0-flash'.",
             category="MODEL_NOT_FOUND",
             model=model,
         )
 
     # 429 / Quota / Rate limit
-    if "429" in msg or "resource_exhausted" in lower or "quota" in lower or "rate limit" in lower or "credit_balance_exhausted" in lower:
+    if code == 429 or "429" in msg or "resource_exhausted" in status or "resource_exhausted" in lower or "quota" in lower or "rate limit" in lower or "credit_balance_exhausted" in lower:
         return AIProviderError(
             "Gemini API quota exhausted or rate limit reached (HTTP 429). "
             "Please check usage at Google AI Studio. Note that Reference Benchmarks remain 100% available offline.",
             category="QUOTA_EXHAUSTED",
+            model=model,
+        )
+
+    # 400 / 401 / 403 / Invalid or unauthorized key
+    if (
+        code in (401, 403)
+        or "401" in msg
+        or "403" in msg
+        or "api_key_invalid" in lower
+        or "invalid api key" in lower
+        or "permission_denied" in status
+        or "permission_denied" in lower
+        or (code == 400 and ("key" in lower or "api_key" in lower or "credential" in lower))
+        or ("400" in msg and "key" in lower)
+    ):
+        return AIProviderError(
+            "Invalid or unauthorized Gemini API key. Please check your credentials in Streamlit Secrets or .env. "
+            "Get a free valid key at https://aistudio.google.com/app/apikey.",
+            category="INVALID_API_KEY",
             model=model,
         )
 
@@ -143,22 +164,6 @@ def classify_gemini_error(exc: Exception, model: str, api_key: Optional[str] = N
         return AIProviderError(
             f"Network failure connecting to Gemini API: {msg}. Please check your internet connection and retry.",
             category="NETWORK_ERROR",
-            model=model,
-        )
-
-    # 400 / 401 / 403 / Invalid or unauthorized key
-    if (
-        "api_key_invalid" in lower
-        or "invalid api key" in lower
-        or "401" in msg
-        or "403" in msg
-        or "permission_denied" in lower
-        or ("400" in msg and "key" in lower)
-    ):
-        return AIProviderError(
-            "Invalid or unauthorized Gemini API key. Please check your credentials in Streamlit Secrets or .env. "
-            "Get a free valid key at https://aistudio.google.com/app/apikey.",
-            category="INVALID_API_KEY",
             model=model,
         )
 
@@ -257,7 +262,7 @@ def get_selectable_gemini_models(api_key: Optional[str] = None) -> tuple[list[st
 
     discovered, diagnostic = list_available_gemini_models(key)
     if discovered:
-        # Check if configured model is verified
+        # Check if configured model is verified in discovered models
         if configured_model in discovered:
             chosen_default = configured_model
         elif DEFAULT_GEMINI_MODEL in discovered:
@@ -266,13 +271,15 @@ def get_selectable_gemini_models(api_key: Optional[str] = None) -> tuple[list[st
             chosen_default = "gemini-2.5-flash"
         elif "gemini-2.0-flash" in discovered:
             chosen_default = "gemini-2.0-flash"
+        elif "gemini-1.5-flash" in discovered:
+            chosen_default = "gemini-1.5-flash"
         else:
             chosen_default = discovered[0]
 
         # Combine options while preserving configured model choice
         options = list(discovered)
         if configured_model not in options:
-            options.insert(0, configured_model)
+            options.append(configured_model)
         return (options, chosen_default, None)
     else:
         # Discovery failed: allow configured model to be tested with diagnostic
@@ -307,13 +314,16 @@ def _call_gemini(
         "Always wrap your SQL in a ```sql ... ``` code block."
     )
 
+    clean_model = model.replace("models/", "").strip()
+    clean_key = api_key.strip() if api_key else ""
+
     try:
         from google import genai
         from google.genai import types
 
-        client = genai.Client(api_key=api_key)
+        client = genai.Client(api_key=clean_key)
         response = client.models.generate_content(
-            model=model,
+            model=clean_model,
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
@@ -322,11 +332,20 @@ def _call_gemini(
         )
 
         raw_text = getattr(response, "text", "") or ""
+        # Robust candidate extraction fallback for thinking/multimodal variants
+        if not raw_text.strip() and hasattr(response, "candidates") and response.candidates:
+            cand = response.candidates[0]
+            if hasattr(cand, "content") and cand.content and hasattr(cand.content, "parts"):
+                parts = cand.content.parts or []
+                texts = [getattr(p, "text", "") for p in parts if getattr(p, "text", None)]
+                if texts:
+                    raw_text = "".join(texts)
+
         if not raw_text.strip():
             raise AIProviderError(
-                f"Model '{model}' returned an empty response. It may have been filtered by safety policies.",
+                f"Model '{clean_model}' returned an empty response. It may have been filtered by safety policies.",
                 category="INVALID_RESPONSE",
-                model=model,
+                model=clean_model,
             )
 
         usage = getattr(response, "usage_metadata", None)
@@ -345,7 +364,7 @@ def _call_gemini(
         import urllib.request
         import urllib.error
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent?key={clean_key}"
         payload = {
             "system_instruction": {"parts": [{"text": system_instruction}]},
             "contents": [{"parts": [{"text": prompt}]}],
@@ -363,7 +382,7 @@ def _call_gemini(
                 resp_data = json.loads(resp.read().decode("utf-8"))
                 candidates = resp_data.get("candidates", [])
                 if not candidates:
-                    raise AIProviderError("Gemini API returned no candidates.", category="INVALID_RESPONSE", model=model)
+                    raise AIProviderError("Gemini API returned no candidates.", category="INVALID_RESPONSE", model=clean_model)
                 parts = candidates[0].get("content", {}).get("parts", [])
                 raw_text = parts[0].get("text", "") if parts else ""
                 usage = resp_data.get("usageMetadata", {})
@@ -373,9 +392,9 @@ def _call_gemini(
                     "completion_tokens": usage.get("candidatesTokenCount", 0),
                 }
         except Exception as rest_err:
-            raise classify_gemini_error(rest_err, model=model, api_key=api_key) from rest_err
+            raise classify_gemini_error(rest_err, model=clean_model, api_key=clean_key) from rest_err
     except Exception as exc:
-        raise classify_gemini_error(exc, model=model, api_key=api_key) from exc
+        raise classify_gemini_error(exc, model=clean_model, api_key=clean_key) from exc
 
 
 def generate_sql(

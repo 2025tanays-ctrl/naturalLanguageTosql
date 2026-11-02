@@ -134,7 +134,7 @@ OPENAI_MODEL=gpt-4o-mini
 ```
 
 > [!NOTE]
-> You can obtain a free Gemini API key in 10 seconds at [Google AI Studio](https://aistudio.google.com/app/apikey). An API key is **only required for live AI generation**. The reference test suite, schema preview, database execution, and all 39 automated tests work completely without an API key!
+> You can obtain a free Gemini API key in 10 seconds at [Google AI Studio](https://aistudio.google.com/app/apikey). An API key is **only required for live AI generation**. The reference test suite, schema preview, database execution, and all 43 automated tests work completely without an API key!
 
 ---
 
@@ -189,13 +189,13 @@ The browser will open automatically at `http://localhost:8501`.
 
 ## 🧪 Running Automated Tests
 
-Run the complete pytest test suite (39 tests across all modules):
+Run the complete pytest test suite (43 tests across all modules):
 
 ```bash
 pytest tests/ -v
 ```
 
-All 39 tests run in under 1 second:
+All 43 tests run in under 1 second:
 - ✅ Safe query execution
 - ✅ Prohibited keywords (`DROP`, `DELETE`, `INSERT`, `ALTER`, etc.)
 - ✅ Semicolon injection / multi-statement rejection
@@ -206,7 +206,8 @@ All 39 tests run in under 1 second:
 - ✅ Error categorization (`MODEL_NOT_FOUND`, `MISSING_API_KEY`, `QUOTA_EXHAUSTED`, `NETWORK_ERROR`)
 - ✅ Execution halting when AI generation fails or is rejected
 - ✅ Semantic correctness vs execution success distinction
-- ✅ SQLite persistence and retrieval with `model` and `error_category` audit columns
+- ✅ SQLite persistence, automated migration, and fresh DB initialization
+- ✅ Preservation of AI generation errors even when storage encounters an operational error
 
 ---
 

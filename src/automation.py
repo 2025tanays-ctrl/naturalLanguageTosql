@@ -10,6 +10,21 @@ def generate_run_id() -> str:
     return f"RUN-{uuid.uuid4().hex[:8].upper()}"
 
 
+def _safe_save_run(**kwargs) -> tuple[Optional[str], Optional[str]]:
+    """
+    Attempt to persist run to storage without masking primary pipeline errors.
+
+    Returns:
+        (saved_run_id_or_none, storage_error_message_or_none)
+    """
+    try:
+        run_id = storage.save_run(**kwargs)
+        return (run_id, None)
+    except Exception as exc:
+        sanitized = ai_generator.sanitize_error_message(str(exc))
+        return (None, f"Audit storage error: {sanitized}")
+
+
 def find_matching_reference_case(question: str) -> Optional[dict]:
     """Find a reference test case matching *question* (case-insensitive substring match)."""
     q_norm = question.strip().lower()
@@ -74,7 +89,7 @@ def run_workflow(
         stages["generation"]["error"] = err
         stages["generation"]["error_category"] = "INVALID_INPUT"
         stages["execution"]["error"] = "Execution skipped due to empty or invalid question."
-        storage.save_run(
+        _, s_err = _safe_save_run(
             run_id=run_id,
             question=question,
             prompt_version=prompt_version,
@@ -88,6 +103,7 @@ def run_workflow(
             model=model,
             error_category="INVALID_INPUT",
         )
+        stages["storage"] = {"saved": s_err is None, "error": s_err}
         return {"run_id": run_id, "stages": stages}
 
     # 2. Schema retrieval & AI generation
@@ -100,7 +116,7 @@ def run_workflow(
         stages["generation"]["error"] = err
         stages["generation"]["error_category"] = "SETUP_ERROR"
         stages["execution"]["error"] = "Execution skipped due to setup error."
-        storage.save_run(
+        _, s_err = _safe_save_run(
             run_id=run_id,
             question=question,
             prompt_version=prompt_version,
@@ -114,6 +130,7 @@ def run_workflow(
             model=model,
             error_category="SETUP_ERROR",
         )
+        stages["storage"] = {"saved": s_err is None, "error": s_err}
         return {"run_id": run_id, "stages": stages}
 
     try:
@@ -142,7 +159,7 @@ def run_workflow(
         stages["generation"]["error_category"] = exc.category
         stages["generation"]["model"] = exc.model
         stages["execution"]["error"] = f"Execution skipped due to AI generation error ({exc.category})."
-        storage.save_run(
+        _, s_err = _safe_save_run(
             run_id=run_id,
             question=question,
             prompt_version=prompt_version,
@@ -156,6 +173,7 @@ def run_workflow(
             model=exc.model,
             error_category=exc.category,
         )
+        stages["storage"] = {"saved": s_err is None, "error": s_err}
         return {"run_id": run_id, "stages": stages}
     except Exception as exc:
         err = str(exc)
@@ -163,7 +181,7 @@ def run_workflow(
         stages["generation"]["error"] = err
         stages["generation"]["error_category"] = category
         stages["execution"]["error"] = f"Execution skipped due to AI generation error ({category})."
-        storage.save_run(
+        _, s_err = _safe_save_run(
             run_id=run_id,
             question=question,
             prompt_version=prompt_version,
@@ -177,6 +195,7 @@ def run_workflow(
             model=model,
             error_category=category,
         )
+        stages["storage"] = {"saved": s_err is None, "error": s_err}
         return {"run_id": run_id, "stages": stages}
 
     # Handle CANNOT_ANSWER signal from AI
@@ -195,7 +214,7 @@ def run_workflow(
                 matched_tc, None, f"CANNOT_ANSWER: {reason}"
             )
 
-        storage.save_run(
+        _, s_err = _safe_save_run(
             run_id=run_id,
             question=question,
             prompt_version=prompt_version,
@@ -209,6 +228,7 @@ def run_workflow(
             model=resolved_model,
             error_category="CANNOT_ANSWER",
         )
+        stages["storage"] = {"saved": s_err is None, "error": s_err}
         return {"run_id": run_id, "stages": stages}
 
     # 3. SQL Validation
@@ -257,7 +277,7 @@ def run_workflow(
 
     # 6. Storage persistence
     row_count = exec_data.get("row_count") if exec_data else 0
-    storage.save_run(
+    _, s_err = _safe_save_run(
         run_id=run_id,
         question=question,
         prompt_version=prompt_version,
@@ -271,6 +291,7 @@ def run_workflow(
         model=resolved_model,
         error_category=error_cat,
     )
+    stages["storage"] = {"saved": s_err is None, "error": s_err}
 
     return {"run_id": run_id, "stages": stages}
 

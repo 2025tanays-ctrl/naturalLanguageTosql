@@ -39,11 +39,9 @@ st.set_page_config(
 )
 
 # ── Initialise databases on first run ─────────────────────────────────────────
-@st.cache_resource
 def initialise():
     database.init_db()
     storage.init_storage()
-    return True
 
 initialise()
 
@@ -767,10 +765,18 @@ with tab_query:
 
                 st.write(f"🛡️ **Stage 3/5:** SQL AST parsing via sqlglot ({'Passed ✅' if val_ok else 'Rejected ❌'})...")
                 st.write(f"⚡ **Stage 4/5:** SQLite read-only sandbox execution ({'Success ✅' if exc_ok else 'Skipped/Halted ⚠️'})...")
-                st.write("💾 **Stage 5/5:** Persisting run telemetry and audit logs into database...")
+                storage_info = stages.get("storage") or {}
+                storage_ok = bool(storage_info.get("saved", True))
+                if storage_ok:
+                    st.write("💾 **Stage 5/5:** Persisting run telemetry and audit logs into database (Saved ✅)...")
+                else:
+                    st.write(f"💾 **Stage 5/5:** Audit storage notice ({storage_info.get('error', 'Skipped')} ⚠️)...")
                 workflow_status.update(label="✨ QueryCraft Pipeline Execution Complete!", state="complete", expanded=False)
 
-            st.toast("⚡ Query successfully processed and saved to audit trail!", icon="🚀")
+            if storage_ok:
+                st.toast("⚡ Query successfully processed and saved to audit trail!", icon="🚀")
+            else:
+                st.toast("⚠️ Run processed, but audit log could not be saved.", icon="⚠️")
 
             # ── Run ID & Timestamp Strip ─────────────────────────────────────
             run_id = result.get("run_id", "N/A")
@@ -789,12 +795,15 @@ with tab_query:
             </div>
             """, unsafe_allow_html=True)
 
+            if not storage_ok:
+                st.warning(f"⚠️ **Audit Storage Notice:** {storage_info.get('error', 'Failed to persist run telemetry.')}")
+
             # ── Visual Pipeline Stepper ───────────────────────────────────────
             step1_cls = "completed"
             step2_cls = "completed" if gen_data.get("success") else "failed"
             step3_cls = "completed" if val_ok else ("failed" if gen_data.get("success") else "")
             step4_cls = "completed" if exc_ok else ("failed" if val_ok else "")
-            step5_cls = "completed"
+            step5_cls = "completed" if storage_ok else "failed"
 
             st.markdown(f"""
             <div class="pipeline-container">
@@ -815,8 +824,8 @@ with tab_query:
                     <div class="node-title">Sandbox Query</div>
                 </div>
                 <div class="stepper-node {step5_cls}">
-                    <div class="node-header"><span>✓</span> Stage 5</div>
-                    <div class="node-title">Audit Logged</div>
+                    <div class="node-header"><span>{"✓" if storage_ok else "!"}</span> Stage 5</div>
+                    <div class="node-title">{"Audit Logged" if storage_ok else "Storage Notice"}</div>
                 </div>
             </div>
             """, unsafe_allow_html=True)

@@ -77,6 +77,40 @@ def test_automation_ai_generation_failure_model_not_found():
         assert matched["error_category"] == "MODEL_NOT_FOUND"
 
 
+def test_automation_preserves_ai_error_when_storage_fails():
+    """Verify that if storage raises an OperationalError, the primary AI exception is preserved."""
+    import sqlite3
+
+    ai_err = ai_generator.AIProviderError(
+        message="Model gemini-3.8-flash is not found (HTTP 404)",
+        category="MODEL_NOT_FOUND",
+        model="gemini-3.8-flash",
+    )
+
+    with patch("src.ai_generator.generate_sql", side_effect=ai_err):
+        with patch("src.storage.save_run", side_effect=sqlite3.OperationalError("table runs locked")):
+            res = automation.run_workflow(
+                question="Show all employees",
+                model="gemini-3.8-flash",
+            )
+
+            # Workflow did not crash
+            assert res is not None
+            assert res["run_id"].startswith("RUN-")
+
+            # Original AI error preserved
+            assert res["stages"]["generation"]["success"] is False
+            assert "Model gemini-3.8-flash is not found (HTTP 404)" in res["stages"]["generation"]["error"]
+            assert res["stages"]["generation"]["error_category"] == "MODEL_NOT_FOUND"
+
+            # Execution was skipped
+            assert res["stages"]["execution"]["success"] is False
+
+            # Storage failure recorded separately without hiding AI error
+            assert res["stages"]["storage"]["saved"] is False
+            assert "table runs locked" in res["stages"]["storage"]["error"]
+
+
 def test_automation_cannot_answer_handling():
     """Verify workflow gracefully handles CANNOT_ANSWER from AI."""
     mock_ai_output = {

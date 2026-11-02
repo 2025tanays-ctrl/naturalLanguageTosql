@@ -7,53 +7,76 @@ from typing import Any, Optional
 from src.database import get_db_path
 
 
-def init_storage() -> None:
-    """Create the runs and reference_test_runs tables if they do not exist."""
+import json
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Optional
+
+from src.database import get_db_path
+
+
+def ensure_storage_schema(conn: sqlite3.Connection) -> None:
+    """
+    Ensure the runs and reference_test_runs tables exist and all required
+    columns (including backward-compatible migrations) are present.
+    """
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS runs (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id            TEXT UNIQUE NOT NULL,
+            timestamp         TEXT NOT NULL,
+            question          TEXT NOT NULL,
+            prompt_version    TEXT NOT NULL,
+            generated_sql     TEXT,
+            validation_status TEXT NOT NULL,
+            execution_status  TEXT NOT NULL,
+            row_count         INTEGER,
+            result_json       TEXT,
+            error_message     TEXT,
+            model             TEXT,
+            error_category    TEXT
+        );
+    """)
+
+    # Backward compatibility: verify and add model and error_category if migrating older DB
+    cursor.execute("PRAGMA table_info(runs)")
+    existing_cols = {col[1] for col in cursor.fetchall()}
+    if "model" not in existing_cols:
+        cursor.execute("ALTER TABLE runs ADD COLUMN model TEXT")
+    if "error_category" not in existing_cols:
+        cursor.execute("ALTER TABLE runs ADD COLUMN error_category TEXT")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS reference_test_runs (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            test_id     TEXT NOT NULL,
+            run_at      TEXT NOT NULL,
+            passed      INTEGER NOT NULL,
+            reason      TEXT,
+            details_json TEXT
+        );
+    """)
+    conn.commit()
+
+
+def get_storage_connection(timeout: float = 15.0) -> sqlite3.Connection:
+    """
+    Create a SQLite connection to the storage database, ensuring the
+    directory exists, schema is initialized/migrated, and timeout is configured.
+    """
     db_path = get_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path), timeout=timeout)
+    ensure_storage_schema(conn)
+    return conn
 
-    conn = sqlite3.connect(str(db_path))
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS runs (
-                id                INTEGER PRIMARY KEY AUTOINCREMENT,
-                run_id            TEXT UNIQUE NOT NULL,
-                timestamp         TEXT NOT NULL,
-                question          TEXT NOT NULL,
-                prompt_version    TEXT NOT NULL,
-                generated_sql     TEXT,
-                validation_status TEXT NOT NULL,
-                execution_status  TEXT NOT NULL,
-                row_count         INTEGER,
-                result_json       TEXT,
-                error_message     TEXT,
-                model             TEXT,
-                error_category    TEXT
-            );
-        """)
 
-        # Backward compatibility: ensure model and error_category columns exist
-        cursor.execute("PRAGMA table_info(runs)")
-        existing_cols = {col[1] for col in cursor.fetchall()}
-        if "model" not in existing_cols:
-            cursor.execute("ALTER TABLE runs ADD COLUMN model TEXT")
-        if "error_category" not in existing_cols:
-            cursor.execute("ALTER TABLE runs ADD COLUMN error_category TEXT")
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS reference_test_runs (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                test_id     TEXT NOT NULL,
-                run_at      TEXT NOT NULL,
-                passed      INTEGER NOT NULL,
-                reason      TEXT,
-                details_json TEXT
-            );
-        """)
-        conn.commit()
-    finally:
-        conn.close()
+def init_storage() -> None:
+    """Create the runs and reference_test_runs tables and run migrations."""
+    conn = get_storage_connection()
+    conn.close()
 
 
 def save_run(
@@ -86,31 +109,38 @@ def save_run(
         except Exception:
             result_json = str(result_data)
 
-    conn = sqlite3.connect(str(get_db_path()))
+    conn = get_storage_connection()
     try:
         cursor = conn.cursor()
+
+        # Determine available columns defensively
+        cursor.execute("PRAGMA table_info(runs)")
+        existing_cols = {col[1] for col in cursor.fetchall()}
+
+        fields = [
+            ("run_id", run_id),
+            ("timestamp", timestamp),
+            ("question", question),
+            ("prompt_version", prompt_version),
+            ("generated_sql", generated_sql),
+            ("validation_status", validation_status),
+            ("execution_status", execution_status),
+            ("row_count", row_count),
+            ("result_json", result_json),
+            ("error_message", error_message),
+        ]
+        if "model" in existing_cols:
+            fields.append(("model", model))
+        if "error_category" in existing_cols:
+            fields.append(("error_category", error_category))
+
+        col_names = ", ".join(f[0] for f in fields)
+        placeholders = ", ".join("?" for _ in fields)
+        values = tuple(f[1] for f in fields)
+
         cursor.execute(
-            """
-            INSERT OR REPLACE INTO runs (
-                run_id, timestamp, question, prompt_version,
-                generated_sql, validation_status, execution_status,
-                row_count, result_json, error_message, model, error_category
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                run_id,
-                timestamp,
-                question,
-                prompt_version,
-                generated_sql,
-                validation_status,
-                execution_status,
-                row_count,
-                result_json,
-                error_message,
-                model,
-                error_category,
-            ),
+            f"INSERT OR REPLACE INTO runs ({col_names}) VALUES ({placeholders})",
+            values,
         )
         conn.commit()
         return run_id
@@ -120,15 +150,26 @@ def save_run(
 
 def get_history(limit: int = 50) -> list[dict]:
     """Retrieve the most recent query runs from storage."""
-    conn = sqlite3.connect(str(get_db_path()))
+    conn = get_storage_connection()
     try:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(runs)")
+        existing_cols = {col[1] for col in cursor.fetchall()}
+
+        select_cols = [
+            "run_id", "timestamp", "question", "prompt_version",
+            "generated_sql", "validation_status", "execution_status",
+            "row_count", "result_json", "error_message"
+        ]
+        if "model" in existing_cols:
+            select_cols.append("model")
+        if "error_category" in existing_cols:
+            select_cols.append("error_category")
+
         cursor.execute(
-            """
-            SELECT run_id, timestamp, question, prompt_version,
-                   generated_sql, validation_status, execution_status,
-                   row_count, result_json, error_message, model, error_category
+            f"""
+            SELECT {', '.join(select_cols)}
             FROM runs
             ORDER BY id DESC
             LIMIT ?
@@ -143,7 +184,7 @@ def get_history(limit: int = 50) -> list[dict]:
 
 def save_reference_test_result(test_result: dict) -> None:
     """Save an individual reference test execution result."""
-    conn = sqlite3.connect(str(get_db_path()))
+    conn = get_storage_connection()
     try:
         cursor = conn.cursor()
         cursor.execute(
