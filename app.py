@@ -566,7 +566,21 @@ with st.sidebar:
         help="Configured in Streamlit Secrets or .env (GEMINI_API_KEY).",
     )
     if gemini_input:
-        os.environ["GEMINI_API_KEY"] = gemini_input.strip()
+        cleaned_key = gemini_input.strip()
+        prev_key = os.environ.get("GEMINI_API_KEY")
+        if cleaned_key != prev_key:
+            os.environ["GEMINI_API_KEY"] = cleaned_key
+            opts, def_m, diag = ai_generator.get_selectable_gemini_models(cleaned_key)
+            st.session_state["gemini_model_options"] = opts
+            st.session_state["gemini_default_model"] = def_m
+            st.session_state["gemini_diagnostic"] = diag
+
+        if cleaned_key.startswith("sk-"):
+            st.warning(
+                "ℹ️ **OpenAI key detected in Gemini field:** Keys starting with `sk-` are OpenAI keys. "
+                "Google Gemini keys start with `AIzaSy...`. "
+                "To use OpenAI, expand the **⚙️ Optional: OpenAI API Key** section below and select **gpt-4o-mini**.",
+            )
 
     active_gemini_key = ai_generator.get_gemini_api_key()
 
