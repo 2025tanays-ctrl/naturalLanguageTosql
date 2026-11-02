@@ -27,9 +27,19 @@ def init_storage() -> None:
                 execution_status  TEXT NOT NULL,
                 row_count         INTEGER,
                 result_json       TEXT,
-                error_message     TEXT
+                error_message     TEXT,
+                model             TEXT,
+                error_category    TEXT
             );
         """)
+
+        # Backward compatibility: ensure model and error_category columns exist
+        cursor.execute("PRAGMA table_info(runs)")
+        existing_cols = {col[1] for col in cursor.fetchall()}
+        if "model" not in existing_cols:
+            cursor.execute("ALTER TABLE runs ADD COLUMN model TEXT")
+        if "error_category" not in existing_cols:
+            cursor.execute("ALTER TABLE runs ADD COLUMN error_category TEXT")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS reference_test_runs (
@@ -57,6 +67,8 @@ def save_run(
     result_data: Optional[dict] = None,
     error_message: Optional[str] = None,
     timestamp: Optional[str] = None,
+    model: Optional[str] = None,
+    error_category: Optional[str] = None,
 ) -> str:
     """
     Persist a query generation & execution run to SQLite.
@@ -82,8 +94,8 @@ def save_run(
             INSERT OR REPLACE INTO runs (
                 run_id, timestamp, question, prompt_version,
                 generated_sql, validation_status, execution_status,
-                row_count, result_json, error_message
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                row_count, result_json, error_message, model, error_category
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
@@ -96,6 +108,8 @@ def save_run(
                 row_count,
                 result_json,
                 error_message,
+                model,
+                error_category,
             ),
         )
         conn.commit()
@@ -114,7 +128,7 @@ def get_history(limit: int = 50) -> list[dict]:
             """
             SELECT run_id, timestamp, question, prompt_version,
                    generated_sql, validation_status, execution_status,
-                   row_count, result_json, error_message
+                   row_count, result_json, error_message, model, error_category
             FROM runs
             ORDER BY id DESC
             LIMIT ?

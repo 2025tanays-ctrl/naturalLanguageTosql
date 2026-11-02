@@ -25,7 +25,7 @@ It features an end-to-end **trigger-action automation workflow**:
 
 - **Frontend:** Streamlit (`>=1.28.0`)
 - **Backend / Language:** Python 3.10+
-- **AI Integration:** OpenAI API (`>=1.0.0`)
+- **AI Integration:** Google GenAI SDK (`google-genai>=1.0.0`) & OpenAI API (`>=1.0.0`)
 - **SQL Parsing & AST Validation:** `sqlglot` (`>=19.0.0`)
 - **Database & Persistence:** SQLite3 (standard library)
 - **Data Manipulation:** `pandas` (`>=2.0.0`)
@@ -126,7 +126,7 @@ Open `.env` in any text editor and add your Google Gemini API key (or OpenAI key
 ```ini
 # Google Gemini API Key (Recommended - Free Tier Available at https://aistudio.google.com/app/apikey)
 GEMINI_API_KEY=your_gemini_api_key_here
-GEMINI_MODEL=gemini-2.0-flash
+GEMINI_MODEL=gemini-3.8-flash
 
 # Optional: OpenAI API Key
 OPENAI_API_KEY=your_openai_api_key_here
@@ -134,11 +134,34 @@ OPENAI_MODEL=gpt-4o-mini
 ```
 
 > [!NOTE]
-> You can obtain a free Gemini API key in 10 seconds at [Google AI Studio](https://aistudio.google.com/app/apikey). An API key is **only required for live AI generation**. The reference test suite, schema preview, database execution, and all 30 automated tests work completely without an API key!
+> You can obtain a free Gemini API key in 10 seconds at [Google AI Studio](https://aistudio.google.com/app/apikey). An API key is **only required for live AI generation**. The reference test suite, schema preview, database execution, and all 39 automated tests work completely without an API key!
 
 ---
 
-## 💻 Running the Application
+## ☁️ Streamlit Community Cloud Deployment
+
+To deploy QueryCraft on [Streamlit Community Cloud](https://share.streamlit.io):
+
+1. **Connect GitHub Repository:**
+   - Push your code to your GitHub repository (e.g., `https://github.com/2025tanays-ctrl/naturalLanguageTosql`).
+   - In Streamlit Community Cloud, click **New app**, select your repository, branch (`main`), and set the main file path to `app.py`.
+
+2. **Configure App Secrets:**
+   - Under **Advanced settings** -> **Secrets** (or in your deployed app dashboard via **Settings -> Secrets**), add your configuration in TOML format:
+   ```toml
+   GEMINI_API_KEY = "your_actual_gemini_api_key_here"
+   GEMINI_MODEL = "gemini-3.8-flash"
+   ```
+   *(Optionally, if using OpenAI: `OPENAI_API_KEY = "..."` and `OPENAI_MODEL = "gpt-4o-mini"`)*
+
+3. **Deploy & Verify:**
+   - Click **Deploy!**. Streamlit automatically installs requirements from `requirements.txt`.
+   - In the sidebar, click **🔄 Check / Refresh Models** to dynamically discover models enabled for your key.
+   - Enter a question such as *"Show the five highest paid employees"* and click **🚀 Generate SQL**.
+
+---
+
+## 💻 Running the Application Locally
 
 Launch the Streamlit web app:
 ```bash
@@ -151,13 +174,14 @@ The browser will open automatically at `http://localhost:8501`.
 1. **💬 Query Tab:**
    - Type custom questions or choose from preloaded examples.
    - Select prompt versions (`v1`, `v2`, `v3`).
+   - Dynamic Gemini Model discovery and status diagnostics with error categorization (`MODEL_NOT_FOUND`, `MISSING_API_KEY`, `QUOTA_EXHAUSTED`, etc.).
    - Click **Generate SQL** to trigger the 7-step automated pipeline.
    - Inspect AI token consumption, AST validation logs, results table, and the unique Run ID.
 2. **🧪 Reference Tests Tab:**
    - Run the 5 benchmark reference test cases with one click.
    - Compare expected outcomes vs actual database responses without needing an API key.
 3. **📜 Query History Tab:**
-   - Audit trail of previous runs stored in SQLite, showing timestamp, question, generated SQL, status, and returned rows.
+   - Audit trail of previous runs stored in SQLite, recording timestamp, question, generated SQL, status, model used, and error category without storing secrets.
 4. **⚖️ Prompt Comparison Tab:**
    - Side-by-side comparison of `v1_basic`, `v2_structured`, and `v3_refined` outputs for any question.
 
@@ -165,21 +189,24 @@ The browser will open automatically at `http://localhost:8501`.
 
 ## 🧪 Running Automated Tests
 
-Run the complete pytest test suite (28 tests across all modules):
+Run the complete pytest test suite (39 tests across all modules):
 
 ```bash
 pytest tests/ -v
 ```
 
-All 28 tests run in under 1 second:
+All 39 tests run in under 1 second:
 - ✅ Safe query execution
 - ✅ Prohibited keywords (`DROP`, `DELETE`, `INSERT`, `ALTER`, etc.)
 - ✅ Semicolon injection / multi-statement rejection
 - ✅ Unknown / hallucinated table prevention
 - ✅ Empty / malformed question input handling
 - ✅ Sanitized API error handling (never exposing secrets)
+- ✅ Gemini model discovery excluding obsolete IDs (e.g. `gemini-1.5-pro`)
+- ✅ Error categorization (`MODEL_NOT_FOUND`, `MISSING_API_KEY`, `QUOTA_EXHAUSTED`, `NETWORK_ERROR`)
+- ✅ Execution halting when AI generation fails or is rejected
 - ✅ Semantic correctness vs execution success distinction
-- ✅ SQLite persistence and retrieval
+- ✅ SQLite persistence and retrieval with `model` and `error_category` audit columns
 
 ---
 

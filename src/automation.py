@@ -1,22 +1,21 @@
-import re
 import uuid
 from datetime import datetime
 from typing import Optional
 
-from src import ai_generator, database, evaluator, storage, validator
+from src import database, validator, ai_generator, evaluator, storage
 
 
 def generate_run_id() -> str:
-    """Generate a clean, readable unique run ID."""
+    """Generate a unique run identifier in format RUN-<HEX>."""
     return f"RUN-{uuid.uuid4().hex[:8].upper()}"
 
 
 def find_matching_reference_case(question: str) -> Optional[dict]:
-    """Find a reference test case matching the question (ignoring punctuation & case)."""
-    clean_q = re.sub(r"[^\w\s]", "", question.strip().lower())
+    """Find a reference test case matching *question* (case-insensitive substring match)."""
+    q_norm = question.strip().lower()
     for tc in evaluator.REFERENCE_CASES:
-        clean_tc_q = re.sub(r"[^\w\s]", "", tc["question"].lower())
-        if clean_q == clean_tc_q:
+        tc_norm = tc["question"].strip().lower()
+        if q_norm == tc_norm or q_norm in tc_norm or tc_norm in q_norm:
             return tc
     return None
 
@@ -24,7 +23,7 @@ def find_matching_reference_case(question: str) -> Optional[dict]:
 def run_workflow(
     question: str,
     prompt_version: str = "v2_structured",
-    model: str = "gemini-2.0-flash",
+    model: Optional[str] = None,
 ) -> dict:
     """
     Execute the full end-to-end trigger-action workflow:
@@ -33,9 +32,12 @@ def run_workflow(
       3. Validate generated SQL for safety and schema correctness
       4. Execute approved read-only query on SQLite
       5. Evaluate against reference answers (if applicable)
-      6. Persist run in SQLite storage
+      6. Persist run in SQLite storage with model and error_category
       7. Return results dict with unique run ID
     """
+    if model is None:
+        model = ai_generator.get_gemini_model()
+
     run_id = generate_run_id()
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -49,6 +51,7 @@ def run_workflow(
             "prompt_tokens": 0,
             "completion_tokens": 0,
             "error": None,
+            "error_category": None,
         },
         "validation": {
             "valid": False,
@@ -69,6 +72,7 @@ def run_workflow(
         err = "Question is too short or empty. Please enter a meaningful question."
         stages["input"]["valid"] = False
         stages["generation"]["error"] = err
+        stages["generation"]["error_category"] = "INVALID_INPUT"
         stages["execution"]["error"] = "Execution skipped due to empty or invalid question."
         storage.save_run(
             run_id=run_id,
@@ -81,6 +85,8 @@ def run_workflow(
             result_data=None,
             error_message=err,
             timestamp=now_str,
+            model=model,
+            error_category="INVALID_INPUT",
         )
         return {"run_id": run_id, "stages": stages}
 
@@ -92,6 +98,7 @@ def run_workflow(
     except Exception as exc:
         err = f"Setup failed: {exc}"
         stages["generation"]["error"] = err
+        stages["generation"]["error_category"] = "SETUP_ERROR"
         stages["execution"]["error"] = "Execution skipped due to setup error."
         storage.save_run(
             run_id=run_id,
@@ -104,6 +111,8 @@ def run_workflow(
             result_data=None,
             error_message=err,
             timestamp=now_str,
+            model=model,
+            error_category="SETUP_ERROR",
         )
         return {"run_id": run_id, "stages": stages}
 
@@ -114,21 +123,25 @@ def run_workflow(
             schema_text=schema_text,
             model=model,
         )
+        resolved_model = gen_res.get("model", model)
         stages["generation"].update(
             {
                 "success": True,
                 "sql": gen_res["sql"],
                 "raw_response": gen_res.get("raw_response", ""),
-                "model": gen_res.get("model", model),
+                "model": resolved_model,
                 "prompt_tokens": gen_res.get("prompt_tokens", 0),
                 "completion_tokens": gen_res.get("completion_tokens", 0),
+                "error_category": None,
             }
         )
         generated_sql = gen_res["sql"]
-    except Exception as exc:
+    except ai_generator.AIProviderError as exc:
         err = str(exc)
         stages["generation"]["error"] = err
-        stages["execution"]["error"] = "Execution skipped due to AI generation error."
+        stages["generation"]["error_category"] = exc.category
+        stages["generation"]["model"] = exc.model
+        stages["execution"]["error"] = f"Execution skipped due to AI generation error ({exc.category})."
         storage.save_run(
             run_id=run_id,
             question=question,
@@ -140,6 +153,29 @@ def run_workflow(
             result_data=None,
             error_message=err,
             timestamp=now_str,
+            model=exc.model,
+            error_category=exc.category,
+        )
+        return {"run_id": run_id, "stages": stages}
+    except Exception as exc:
+        err = str(exc)
+        category = "MISSING_API_KEY" if isinstance(exc, EnvironmentError) else "PROVIDER_ERROR"
+        stages["generation"]["error"] = err
+        stages["generation"]["error_category"] = category
+        stages["execution"]["error"] = f"Execution skipped due to AI generation error ({category})."
+        storage.save_run(
+            run_id=run_id,
+            question=question,
+            prompt_version=prompt_version,
+            validation_status="generation_failed",
+            execution_status="skipped",
+            generated_sql=None,
+            row_count=0,
+            result_data=None,
+            error_message=err,
+            timestamp=now_str,
+            model=model,
+            error_category=category,
         )
         return {"run_id": run_id, "stages": stages}
 
@@ -170,6 +206,8 @@ def run_workflow(
             result_data=None,
             error_message=reason,
             timestamp=now_str,
+            model=resolved_model,
+            error_category="CANNOT_ANSWER",
         )
         return {"run_id": run_id, "stages": stages}
 
@@ -179,10 +217,11 @@ def run_workflow(
 
     validation_status = "valid" if val_res["valid"] else "invalid"
 
-    # 4. SQL Execution
+    # 4. SQL Execution (Never executed if validation fails)
     exec_data = None
     exec_error = None
     execution_status = "skipped"
+    error_cat = None
 
     if val_res["valid"]:
         try:
@@ -195,6 +234,7 @@ def run_workflow(
             execution_status = "success"
         except Exception as exc:
             exec_error = str(exc)
+            error_cat = "DATABASE_ERROR"
             stages["execution"] = {
                 "success": False,
                 "data": None,
@@ -203,6 +243,7 @@ def run_workflow(
             execution_status = "failed"
     else:
         exec_error = "Validation rejected the SQL: " + "; ".join(val_res["errors"])
+        error_cat = "UNSAFE_SQL"
         stages["execution"]["error"] = exec_error
 
     # 5. Verification against reference cases (if applicable)
@@ -227,6 +268,8 @@ def run_workflow(
         result_data=exec_data,
         error_message=exec_error,
         timestamp=now_str,
+        model=resolved_model,
+        error_category=error_cat,
     )
 
     return {"run_id": run_id, "stages": stages}

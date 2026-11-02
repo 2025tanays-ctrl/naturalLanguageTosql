@@ -21,6 +21,15 @@ from datetime import datetime
 
 from src import database, validator, ai_generator, evaluator, storage, automation
 
+# ── Synchronize Streamlit Secrets into os.environ ────────────────────────────
+try:
+    if hasattr(st, "secrets"):
+        for _secret_key in ["GEMINI_API_KEY", "GEMINI_MODEL", "OPENAI_API_KEY", "OPENAI_MODEL"]:
+            if _secret_key in st.secrets and not os.environ.get(_secret_key):
+                os.environ[_secret_key] = str(st.secrets[_secret_key]).strip()
+except Exception:
+    pass
+
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="QueryCraft — AI SQL Copilot",
@@ -547,56 +556,60 @@ with st.sidebar:
         help="Select the prompting strategy used to instruct OpenAI models."
     )
 
-    model_name = st.selectbox(
-        "Inference Model",
-        ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gpt-4o-mini"],
-        index=0,
-        help="Target AI model. Google Gemini provides generous free API quota via Google AI Studio.",
-    )
-
-    st.markdown("---")
-    st.markdown("#### 🗄️ Database Inspector")
-    try:
-        schema = database.get_schema()
-        # Calculate stats
-        conn_stats = database.get_readonly_connection()
-        c = conn_stats.cursor()
-        c.execute("SELECT count(*) FROM employees")
-        emp_count = c.fetchone()[0]
-        c.execute("SELECT count(*) FROM departments")
-        dept_count = c.fetchone()[0]
-        conn_stats.close()
-
-        col_s1, col_s2 = st.columns(2)
-        with col_s1:
-            st.metric("Employees", emp_count)
-        with col_s2:
-            st.metric("Depts", dept_count)
-
-        for table, columns in schema.items():
-            with st.expander(f"📁 `{table}` ({len(columns)} cols)", expanded=False):
-                for col in columns:
-                    pk_badge = " 🔑" if col["pk"] else ""
-                    nn_badge = " ★" if col["notnull"] else ""
-                    st.markdown(
-                        f"<div class='schema-col-pill'><b>{col['name']}</b>: <i>{col['type']}</i>{pk_badge}{nn_badge}</div>",
-                        unsafe_allow_html=True
-                    )
-    except Exception as e:
-        st.error(f"Schema load error: {e}")
-
+    # API Key Configuration
     st.markdown("---")
     st.markdown("#### 🔑 Gemini API Configuration")
-    gemini_env = os.getenv("GEMINI_API_KEY", "")
+    gemini_env = ai_generator.get_gemini_api_key() or ""
     gemini_input = st.text_input(
         "Google Gemini API Key",
         value=gemini_env,
         type="password",
         placeholder="AIzaSy...",
-        help="Get your free key from https://aistudio.google.com/app/apikey",
+        help="Configured in Streamlit Secrets or .env (GEMINI_API_KEY).",
     )
     if gemini_input:
         os.environ["GEMINI_API_KEY"] = gemini_input.strip()
+
+    active_gemini_key = ai_generator.get_gemini_api_key()
+
+    # Dynamic Model Discovery & Selection
+    if "gemini_model_options" not in st.session_state:
+        opts, def_m, diag = ai_generator.get_selectable_gemini_models(active_gemini_key)
+        st.session_state["gemini_model_options"] = opts
+        st.session_state["gemini_default_model"] = def_m
+        st.session_state["gemini_diagnostic"] = diag
+
+    st.markdown("#### 🤖 Model Selection")
+    col_sel, col_btn = st.columns([3.5, 1])
+    with col_btn:
+        st.write("")
+        if st.button("🔄", help="Query Gemini Models API to discover available models for your API key"):
+            opts, def_m, diag = ai_generator.get_selectable_gemini_models(active_gemini_key)
+            st.session_state["gemini_model_options"] = opts
+            st.session_state["gemini_default_model"] = def_m
+            st.session_state["gemini_diagnostic"] = diag
+            st.rerun()
+
+    model_options = list(st.session_state.get("gemini_model_options", ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]))
+    if "gpt-4o-mini" not in model_options:
+        model_options.append("gpt-4o-mini")
+
+    def_model = st.session_state.get("gemini_default_model", "gemini-3.8-flash")
+    default_idx = model_options.index(def_model) if def_model in model_options else 0
+
+    with col_sel:
+        model_name = st.selectbox(
+            "Inference Model",
+            model_options,
+            index=default_idx,
+            help="Select verified model. Initial candidate: gemini-3.8-flash.",
+        )
+
+    diag_msg = st.session_state.get("gemini_diagnostic")
+    if diag_msg and not active_gemini_key:
+        st.caption(f"ℹ️ {diag_msg}")
+    elif diag_msg:
+        st.caption(f"⚠️ {diag_msg}")
 
     with st.expander("⚙️ Optional: OpenAI API Key", expanded=False):
         openai_env = os.getenv("OPENAI_API_KEY", "")
@@ -610,7 +623,7 @@ with st.sidebar:
             os.environ["OPENAI_API_KEY"] = openai_input.strip()
 
     is_gemini_active = model_name.startswith("gemini")
-    active_key_set = bool(os.environ.get("GEMINI_API_KEY")) if is_gemini_active else bool(os.environ.get("OPENAI_API_KEY"))
+    active_key_set = bool(ai_generator.get_gemini_api_key()) if is_gemini_active else bool(os.environ.get("OPENAI_API_KEY"))
 
     if active_key_set:
         provider_name = "Google Gemini" if is_gemini_active else "OpenAI"
@@ -625,7 +638,7 @@ with st.sidebar:
         st.markdown(f"""
         <div class="callout-box warning">
             <span>⚠️</span>
-            <div><strong>No {req_key}</strong><br><span style="font-size:0.75rem;">Enter key above or in <code>.env</code>.<br><a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#60a5fa; text-decoration:underline;">Get free Gemini key ↗</a></span></div>
+            <div><strong>No {req_key}</strong><br><span style="font-size:0.75rem;">Configure key in Streamlit Secrets or above.<br><a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#60a5fa; text-decoration:underline;">Get free Gemini key ↗</a></span></div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -839,18 +852,70 @@ with tab_query:
                             st.text(gen_data["raw_response"])
                 else:
                     err_msg = gen_data.get('error', 'Unknown generation error')
-                    st.markdown(f"""
-                    <div class="callout-box danger">
-                        <span>❌</span>
-                        <div><strong>Generation Failed:</strong> {err_msg}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    if "insufficient_quota" in err_msg or "credit_balance_exhausted" in err_msg:
-                        st.markdown("""
+                    err_cat = gen_data.get('error_category', 'PROVIDER_ERROR')
+
+                    if err_cat == "MODEL_NOT_FOUND":
+                        st.markdown(f"""
+                        <div class="callout-box danger">
+                            <span>🚫</span>
+                            <div>
+                                <strong>Model Error (404 Not Found):</strong><br>
+                                Model <code>{model_name}</code> is not supported or not found for generateContent on this API key.<br>
+                                <span style="font-size:0.8rem;">Click the <b>'🔄'</b> button in the sidebar to discover verified available models, or switch to <code>gemini-3.8-flash</code> / <code>gemini-2.5-flash</code>.</span>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    elif err_cat in ("MISSING_API_KEY", "INVALID_API_KEY"):
+                        st.markdown(f"""
+                        <div class="callout-box warning">
+                            <span>🔑</span>
+                            <div>
+                                <strong>API Credentials Issue ({err_cat}):</strong><br>
+                                {err_msg}<br>
+                                <span style="font-size:0.8rem;">Provide a valid free Gemini key from <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#60a5fa; text-decoration:underline;">Google AI Studio</a>.</span>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    elif err_cat == "QUOTA_EXHAUSTED":
+                        st.markdown(f"""
                         <div class="callout-box warning">
                             <span>💳</span>
-                            <div><strong>OpenAI Account Notice:</strong> Your OpenAI API key has 0 available billing credits. Add credits at <a href="https://platform.openai.com/settings/organization/billing" target="_blank" style="color:#60a5fa; text-decoration:underline;">platform.openai.com/billing</a>.<br>
-                            <i>Note: You can still run all 5 database test cases in the <b>Reference Benchmarks</b> tab without OpenAI credits!</i></div>
+                            <div>
+                                <strong>Rate Limit / Quota Exceeded (429):</strong><br>
+                                {err_msg}<br>
+                                <span style="font-size:0.8rem;">Wait a moment and retry. All 5 Reference Benchmarks remain available offline!</span>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    elif err_cat == "NETWORK_ERROR":
+                        st.markdown(f"""
+                        <div class="callout-box danger">
+                            <span>📡</span>
+                            <div>
+                                <strong>Network Connection Error:</strong><br>
+                                {err_msg}<br>
+                                <span style="font-size:0.8rem;">Failed to reach Gemini API servers. Please check your internet connection and retry.</span>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    elif err_cat == "INVALID_RESPONSE":
+                        st.markdown(f"""
+                        <div class="callout-box danger">
+                            <span>⚠️</span>
+                            <div>
+                                <strong>Invalid AI Output:</strong><br>
+                                {err_msg}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"""
+                        <div class="callout-box danger">
+                            <span>❌</span>
+                            <div>
+                                <strong>Generation Failed ({err_cat}):</strong><br>
+                                {err_msg}
+                            </div>
                         </div>
                         """, unsafe_allow_html=True)
 
@@ -1131,12 +1196,20 @@ with tab_history:
 
                 header_label = f"**{run_id}** · {ts} · {q[:65]}{'…' if len(q) > 65 else ''}"
 
+                r_mdl = run.get("model") or "N/A"
+                r_cat = run.get("error_category")
+
                 with st.expander(header_label, expanded=False):
                     c1, c2, c3, c4 = st.columns(4)
                     c1.markdown(f"**Run ID:** `{run_id}`")
                     c2.markdown(f"**Prompt Strategy:** `{pv}`")
                     c3.markdown(f"**Validation:** <span class='badge-pill {vs_badge}'>{vs.upper()}</span>", unsafe_allow_html=True)
                     c4.markdown(f"**Execution:** <span class='badge-pill {es_badge}'>{es.upper()}</span>", unsafe_allow_html=True)
+
+                    c_m1, c_m2 = st.columns(2)
+                    c_m1.markdown(f"**Model:** `{r_mdl}`")
+                    if r_cat:
+                        c_m2.markdown(f"**Error Category:** <span class='badge-pill badge-warning'>{r_cat}</span>", unsafe_allow_html=True)
 
                     if run.get("generated_sql"):
                         st.code(run["generated_sql"], language="sql")
