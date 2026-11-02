@@ -589,6 +589,8 @@ with st.sidebar:
             st.rerun()
 
     model_options = list(st.session_state.get("gemini_model_options", ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]))
+    if "gemini-3.8-flash" not in model_options:
+        model_options.insert(0, "gemini-3.8-flash")
     if "gpt-4o-mini" not in model_options:
         model_options.append("gpt-4o-mini")
 
@@ -600,7 +602,7 @@ with st.sidebar:
             "Inference Model",
             model_options,
             index=default_idx,
-            help="Select verified model. Initial candidate: gemini-3.8-flash.",
+            help="Active AI model. Default: gemini-3.8-flash (Latest Gemini 3.8).",
         )
 
     diag_msg = st.session_state.get("gemini_diagnostic")

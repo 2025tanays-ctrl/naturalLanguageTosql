@@ -262,10 +262,12 @@ def get_selectable_gemini_models(api_key: Optional[str] = None) -> tuple[list[st
 
     discovered, diagnostic = list_available_gemini_models(key)
     if discovered:
-        # Check if configured model is verified in discovered models
+        # Prioritize configured model or Gemini 3.8 default
         if configured_model in discovered:
             chosen_default = configured_model
         elif DEFAULT_GEMINI_MODEL in discovered:
+            chosen_default = DEFAULT_GEMINI_MODEL
+        elif configured_model == DEFAULT_GEMINI_MODEL:
             chosen_default = DEFAULT_GEMINI_MODEL
         elif "gemini-2.5-flash" in discovered:
             chosen_default = "gemini-2.5-flash"
@@ -276,10 +278,15 @@ def get_selectable_gemini_models(api_key: Optional[str] = None) -> tuple[list[st
         else:
             chosen_default = discovered[0]
 
-        # Combine options while preserving configured model choice
-        options = list(discovered)
+        # Combine options with Gemini 3.8 and configured model at the front
+        options = []
+        if DEFAULT_GEMINI_MODEL not in options:
+            options.append(DEFAULT_GEMINI_MODEL)
         if configured_model not in options:
             options.append(configured_model)
+        for m in discovered:
+            if m not in options:
+                options.append(m)
         return (options, chosen_default, None)
     else:
         # Discovery failed: allow configured model to be tested with diagnostic
