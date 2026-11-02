@@ -562,8 +562,8 @@ with st.sidebar:
         "Google Gemini API Key",
         value=gemini_env,
         type="password",
-        placeholder="AIzaSy...",
-        help="Configured in Streamlit Secrets or .env (GEMINI_API_KEY).",
+        placeholder="AIzaSy... or AQ...",
+        help="Google Gemini API key from https://aistudio.google.com/app/apikey",
     )
     if gemini_input:
         cleaned_key = gemini_input.strip()
@@ -578,7 +578,7 @@ with st.sidebar:
         if cleaned_key.startswith("sk-"):
             st.warning(
                 "ℹ️ **OpenAI key detected in Gemini field:** Keys starting with `sk-` are OpenAI keys. "
-                "Google Gemini keys start with `AIzaSy...`. "
+                "Google Gemini keys start with `AIzaSy...` or `AQ...`. "
                 "To use OpenAI, expand the **⚙️ Optional: OpenAI API Key** section below and select **gpt-4o-mini**.",
             )
 
