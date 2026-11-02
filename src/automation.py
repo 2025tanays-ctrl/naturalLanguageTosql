@@ -24,7 +24,7 @@ def find_matching_reference_case(question: str) -> Optional[dict]:
 def run_workflow(
     question: str,
     prompt_version: str = "v2_structured",
-    model: str = "gpt-4o-mini",
+    model: str = "gemini-2.0-flash",
 ) -> dict:
     """
     Execute the full end-to-end trigger-action workflow:

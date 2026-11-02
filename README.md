@@ -122,14 +122,19 @@ cp .env.example .env
 copy .env.example .env
 ```
 
-Open `.env` in any text editor and add your OpenAI API key:
+Open `.env` in any text editor and add your Google Gemini API key (or OpenAI key):
 ```ini
-OPENAI_API_KEY=sk-proj-yourActualKeyHere
+# Google Gemini API Key (Recommended - Free Tier Available at https://aistudio.google.com/app/apikey)
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-2.0-flash
+
+# Optional: OpenAI API Key
+OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_MODEL=gpt-4o-mini
 ```
 
 > [!NOTE]
-> An API key is **only required for live AI generation**. The reference test suite, schema preview, database execution, and unit tests work completely without an API key!
+> You can obtain a free Gemini API key in 10 seconds at [Google AI Studio](https://aistudio.google.com/app/apikey). An API key is **only required for live AI generation**. The reference test suite, schema preview, database execution, and all 30 automated tests work completely without an API key!
 
 ---
 

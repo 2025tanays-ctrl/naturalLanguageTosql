@@ -42,6 +42,40 @@ def test_api_key_missing_error():
             ai_generator.get_client()
 
 
+def test_gemini_api_key_missing_error():
+    """Verify EnvironmentError is raised when GEMINI_API_KEY is not set for Gemini models."""
+    with patch.dict(os.environ, {}, clear=True):
+        with pytest.raises(EnvironmentError, match="GEMINI_API_KEY not set"):
+            ai_generator.generate_sql(
+                question="Show employees",
+                prompt_template="Question: {question}",
+                schema_text="Schema",
+                model="gemini-2.0-flash",
+            )
+
+
+def test_gemini_generation_mocked():
+    """Verify Google Gemini SQL generation and token extraction."""
+    mock_gemini_output = {
+        "raw_response": "```sql\nSELECT * FROM departments;\n```",
+        "prompt_tokens": 85,
+        "completion_tokens": 12,
+    }
+    with patch.dict(os.environ, {"GEMINI_API_KEY": "AIzaSyMockGeminiKey123"}):
+        with patch("src.ai_generator._call_gemini", return_value=mock_gemini_output) as mock_call:
+            res = ai_generator.generate_sql(
+                question="Show departments",
+                prompt_template="Question: {question}\nSchema: {schema}",
+                schema_text="Table departments",
+                model="gemini-2.0-flash",
+            )
+            assert res["sql"] == "SELECT * FROM departments;"
+            assert res["model"] == "gemini-2.0-flash"
+            assert res["prompt_tokens"] == 85
+            assert res["completion_tokens"] == 12
+            mock_call.assert_called_once()
+
+
 def test_api_error_handling_sanitized():
     """Verify that OpenAI API errors are caught cleanly without leaking secrets."""
     with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-mock-fake-key-12345"}):
@@ -60,4 +94,3 @@ def test_api_error_handling_sanitized():
             assert "OpenAI API request failed (RuntimeError)" in str(exc_info.value)
             # Never leak the key
             assert "sk-mock-fake-key-12345" not in str(exc_info.value)
-

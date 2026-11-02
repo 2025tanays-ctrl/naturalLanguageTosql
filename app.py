@@ -549,9 +549,9 @@ with st.sidebar:
 
     model_name = st.selectbox(
         "Inference Model",
-        ["gpt-4o-mini", "gpt-3.5-turbo", "gpt-4o"],
+        ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gpt-4o-mini"],
         index=0,
-        help="Target OpenAI LLM for natural language translation."
+        help="Target AI model. Google Gemini provides generous free API quota via Google AI Studio.",
     )
 
     st.markdown("---")
@@ -586,31 +586,46 @@ with st.sidebar:
         st.error(f"Schema load error: {e}")
 
     st.markdown("---")
-    st.markdown("#### 🔑 OpenAI API Configuration")
-    env_key = os.getenv("OPENAI_API_KEY", "")
-    key_input = st.text_input(
-        "API Key",
-        value=env_key,
+    st.markdown("#### 🔑 Gemini API Configuration")
+    gemini_env = os.getenv("GEMINI_API_KEY", "")
+    gemini_input = st.text_input(
+        "Google Gemini API Key",
+        value=gemini_env,
         type="password",
-        placeholder="sk-proj-...",
-        help="OpenAI API key. Loaded from .env by default.",
+        placeholder="AIzaSy...",
+        help="Get your free key from https://aistudio.google.com/app/apikey",
     )
-    if key_input:
-        os.environ["OPENAI_API_KEY"] = key_input.strip()
+    if gemini_input:
+        os.environ["GEMINI_API_KEY"] = gemini_input.strip()
 
-    api_key_set = bool(os.environ.get("OPENAI_API_KEY"))
-    if api_key_set:
-        st.markdown("""
+    with st.expander("⚙️ Optional: OpenAI API Key", expanded=False):
+        openai_env = os.getenv("OPENAI_API_KEY", "")
+        openai_input = st.text_input(
+            "OpenAI API Key",
+            value=openai_env,
+            type="password",
+            placeholder="sk-proj-...",
+        )
+        if openai_input:
+            os.environ["OPENAI_API_KEY"] = openai_input.strip()
+
+    is_gemini_active = model_name.startswith("gemini")
+    active_key_set = bool(os.environ.get("GEMINI_API_KEY")) if is_gemini_active else bool(os.environ.get("OPENAI_API_KEY"))
+
+    if active_key_set:
+        provider_name = "Google Gemini" if is_gemini_active else "OpenAI"
+        st.markdown(f"""
         <div class="callout-box success">
             <span>🟢</span>
-            <div><strong>OpenAI Key Active</strong><br><span style="font-size:0.75rem;">Key configured & loaded.</span></div>
+            <div><strong>{provider_name} Ready</strong><br><span style="font-size:0.75rem;">Model: <code>{model_name}</code></span></div>
         </div>
         """, unsafe_allow_html=True)
     else:
-        st.markdown("""
+        req_key = "GEMINI_API_KEY" if is_gemini_active else "OPENAI_API_KEY"
+        st.markdown(f"""
         <div class="callout-box warning">
             <span>⚠️</span>
-            <div><strong>No API Key Detected</strong><br><span style="font-size:0.75rem;">Enter key above or set in .env.<br>Reference tests remain functional.</span></div>
+            <div><strong>No {req_key}</strong><br><span style="font-size:0.75rem;">Enter key above or in <code>.env</code>.<br><a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#60a5fa; text-decoration:underline;">Get free Gemini key ↗</a></span></div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -711,11 +726,14 @@ with tab_query:
                 <div><strong>Input Required:</strong> Please enter a question or click one of the quick prompt templates above.</div>
             </div>
             """, unsafe_allow_html=True)
-        elif not api_key_set:
-            st.markdown("""
+        elif not active_key_set:
+            missing_provider = "Google Gemini" if is_gemini_active else "OpenAI"
+            key_var = "GEMINI_API_KEY" if is_gemini_active else "OPENAI_API_KEY"
+            st.markdown(f"""
             <div class="callout-box warning">
                 <span>⚠️</span>
-                <div><strong>OpenAI API Key Missing:</strong> Configure <code>OPENAI_API_KEY</code> in your <code>.env</code> file to run zero-shot inference. You can still run the 5 pre-validated benchmarks in the <b>Reference Benchmarks</b> tab.</div>
+                <div><strong>{missing_provider} API Key Required:</strong> Enter your key in the sidebar or set <code>{key_var}</code> in your <code>.env</code> file. (Get a free Gemini key at <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#60a5fa; text-decoration:underline;">aistudio.google.com</a>).<br>
+                <i>You can also run all 5 database benchmarks in the <b>Reference Benchmarks</b> tab completely offline!</i></div>
             </div>
             """, unsafe_allow_html=True)
         else:
@@ -1169,11 +1187,11 @@ with tab_compare:
         compare_clicked = st.button("🔬 Compare All 3 Strategies", type="primary", use_container_width=True)
 
     if compare_clicked:
-        if not api_key_set:
+        if not active_key_set:
             st.markdown("""
             <div class="callout-box warning">
                 <span>⚠️</span>
-                <div><strong>OpenAI API Key Missing:</strong> Comparing prompt versions requires an active OpenAI API key.</div>
+                <div><strong>API Key Required:</strong> Comparing prompt versions requires an active API key (set in the sidebar or in <code>.env</code>).</div>
             </div>
             """, unsafe_allow_html=True)
         else:
