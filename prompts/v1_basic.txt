@@ -1,0 +1,5 @@
+Convert the following question into a valid SQLite SQL query:
+
+Question: {question}
+
+SQL:

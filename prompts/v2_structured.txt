@@ -1,0 +1,14 @@
+You are a SQL expert. Convert the natural language question into a valid SQLite SQL query.
+
+DATABASE SCHEMA:
+{schema}
+
+RULES:
+- Use only SQLite syntax
+- Only use SELECT statements (no INSERT, UPDATE, DELETE)
+- Only use tables and columns that exist in the schema above
+- Return only the SQL query, wrapped in ```sql ... ``` code blocks
+
+Question: {question}
+
+SQL:

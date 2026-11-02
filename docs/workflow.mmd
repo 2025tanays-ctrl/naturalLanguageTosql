@@ -1,0 +1,25 @@
+flowchart TD
+    A([User enters question]) --> B{Question valid?}
+    B -- No --> B1([Show error: question too short or empty])
+    B -- Yes --> C["Load prompt template<br>(v1_basic / v2_structured / v3_refined)"]
+    C --> D["Retrieve SQLite database schema"]
+    D --> E["Call OpenAI API<br>(Chat Completions)"]
+    E --> F{API call success?}
+    F -- No --> F1([Show clean API error<br>Never expose API key])
+    F -- Yes --> G["Extract SQL from markdown fence or text"]
+    G --> H["Validate SQL structure<br>(AST parse via sqlglot, blocked keywords, table whitelist)"]
+    H --> I{SQL safe & valid?}
+    I -- No --> I1([Display validation errors<br>Block execution])
+    I -- Yes --> J["Execute read-only query on SQLite<br>(PRAGMA query_only = ON, timeout, row limit)"]
+    J --> K{Query execution success?}
+    K -- No --> K1([Display runtime error])
+    K -- Yes --> L["Evaluate against reference benchmarks<br>(Semantic correctness vs execution success)"]
+    L --> M["Persist run to SQLite storage<br>(runs table with unique Run ID)"]
+    M --> N([Display in Streamlit:<br>SQL, Results table, Validation badge, Run ID])
+
+    style A fill:#2e7d32,color:#ffffff
+    style N fill:#1565c0,color:#ffffff
+    style B1 fill:#c62828,color:#ffffff
+    style F1 fill:#c62828,color:#ffffff
+    style I1 fill:#c62828,color:#ffffff
+    style K1 fill:#c62828,color:#ffffff
