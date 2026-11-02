@@ -22,6 +22,7 @@ _VERSION_FILE_MAP: dict[str, str] = {
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 SUPPORTED_GEMINI_MODELS = [
     "gemini-3.8-flash",
+    "gemini-flash-latest",
     "gemini-2.5-flash",
     "gemini-2.0-flash",
     "gemini-1.5-flash",
@@ -133,7 +134,16 @@ def classify_gemini_error(exc: Exception, model: str, api_key: Optional[str] = N
             model=model,
         )
 
-    # 400 / 401 / 403 / Invalid or unauthorized key
+    # 400 / 401 / 403 / Invalid or unauthorized key / Project billing restriction
+    if "free tier is not available for this project" in lower or ("billing" in lower and "upgrade" in lower):
+        return AIProviderError(
+            "The Gemini API free tier is disabled for this Google Cloud project (HTTP 403). "
+            "To get a 100% free key: in Google AI Studio (https://aistudio.google.com/app/apikey), click 'Create API key' -> choose 'Create API key in new project' (do NOT select an existing GCP project). "
+            "Alternatively, use your OpenAI key with model 'gpt-4o-mini'.",
+            category="INVALID_API_KEY",
+            model=model,
+        )
+
     if (
         code in (401, 403)
         or "401" in msg
